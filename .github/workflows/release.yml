@@ -1,0 +1,105 @@
+name: Release - Build & Publish
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build EXE & Create Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          echo "📦 Building version: $VERSION"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build EXE with PyInstaller
+        run: |
+          pyinstaller --onefile --windowed --name "SleepProcessManager-${{ steps.version.outputs.version }}" --icon=NONE sleep_manager.py
+
+      - name: Verify EXE
+        run: |
+          $exeName = "SleepProcessManager-${{ steps.version.outputs.version }}.exe"
+          if (Test-Path "dist\$exeName") {
+            $size = (Get-Item "dist\$exeName").Length / 1MB
+            Write-Host "✅ Build successful! EXE: $exeName ($([math]::Round($size, 2)) MB)"
+          } else {
+            Write-Error "❌ EXE not found!"
+            exit 1
+          }
+
+      - name: Generate Release Notes
+        id: notes
+        shell: bash
+        run: |
+          echo "## 🚀 SleepProcessManager ${{ steps.version.outputs.tag }}" > release_notes.md
+          echo "" >> release_notes.md
+          echo "### ⚡ Windows Power & Sleep Manager Dashboard" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "A real-time monitoring dashboard for diagnosing Windows sleep/wake issues." >> release_notes.md
+          echo "" >> release_notes.md
+          echo "### ✨ Features" >> release_notes.md
+          echo "- 🔄 **Real-time monitoring** — Polls \`powercfg /requests\`, \`/lastwake\`, \`/waketimers\` every 5 seconds" >> release_notes.md
+          echo "- 🚦 **Traffic light system** — Green when clear, pulsing red when blockers detected" >> release_notes.md
+          echo "- ⛔ **Process killer** — Terminate blocking processes directly from the dashboard" >> release_notes.md
+          echo "- 🛡️ **Sleep override** — Apply \`powercfg /requestsoverride\` with one click" >> release_notes.md
+          echo "- 🖥️ **Device Manager shortcut** — Quick access to manage wake-capable devices" >> release_notes.md
+          echo "- 📋 **Event log** — Timestamped history of all scan results and actions" >> release_notes.md
+          echo "- 🔒 **Admin check** — Automatically requests elevation on startup" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "### 📥 Installation" >> release_notes.md
+          echo "1. Download \`SleepProcessManager-${{ steps.version.outputs.version }}.exe\` below" >> release_notes.md
+          echo "2. **Right-click → Run as Administrator**" >> release_notes.md
+          echo "3. No Python installation required!" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "### 📝 Changelog" >> release_notes.md
+          echo "" >> release_notes.md
+          # Auto-generate changelog from commits since last tag
+          PREV_TAG=$(git tag --sort=-creatordate | head -2 | tail -1 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ] && [ "$PREV_TAG" != "${{ steps.version.outputs.tag }}" ]; then
+            echo "Changes since \`$PREV_TAG\`:" >> release_notes.md
+            git log "$PREV_TAG"..HEAD --pretty=format:"- %s (%h)" --no-merges >> release_notes.md
+          else
+            echo "- Initial release 🎉" >> release_notes.md
+          fi
+          echo "" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "---" >> release_notes.md
+          echo "*Built with Python 3.12 + PyQt5 on Windows*" >> release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "SleepProcessManager ${{ steps.version.outputs.tag }}"
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+          files: |
+            dist/SleepProcessManager-${{ steps.version.outputs.version }}.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
